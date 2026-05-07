@@ -1,0 +1,9 @@
+[meta]
+name = "Countersteer Advisor"
+author = "abukc"
+category = "Overlay"
+version = "0.2.3"
+
+[script]
+dependencies = [ "VehicleState" ]
+timeout = 0
