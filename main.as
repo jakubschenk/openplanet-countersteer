@@ -118,16 +118,16 @@ void UpdateCountersteerState()
         return;
     }
 
-    uint now = Time::Now;
-    UpdateYawEstimate(vis, now);
-
     g_IsAirborne = !vis.IsGroundContact && vis.GroundDist >= S_MinAirHeight;
     if (!g_IsAirborne) {
         g_RecommendedSteer = 0;
         ResetAirborneSteerDirection();
+        ResetYawTracking();
         return;
     }
 
+    uint now = Time::Now;
+    UpdateYawEstimate(vis, now);
     UpdateAirborneSteerDirection();
 }
 
@@ -293,9 +293,6 @@ void UpdateAirborneSteerDirection()
 {
     if (!g_HasAirborneSteerDirection) {
         int candidate = BarDirectionFromYawSignal(g_RawYawRateDeg);
-        if (candidate == 0) {
-            candidate = BarDirectionFromYawSignal(g_YawRateDeg);
-        }
         if (candidate == 0) {
             g_RecommendedSteer = 0;
             return;
