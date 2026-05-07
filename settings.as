@@ -40,3 +40,21 @@ float S_OverlayWidth = 0.28f;
 
 [Setting category="Display" name="Opacity" min=0.1 max=1.0]
 float S_Opacity = 0.78f;
+
+[Setting color category="Theme" name="Active accent"]
+vec4 S_ThemeActiveAccent = vec4(0.25f, 0.72f, 1.0f, 1.0f);
+
+[Setting color category="Theme" name="Neutral accent"]
+vec4 S_ThemeNeutralAccent = vec4(0.55f, 0.6f, 0.65f, 1.0f);
+
+[Setting color category="Theme" name="Panel background"]
+vec4 S_ThemePanelBg = vec4(0.02f, 0.025f, 0.03f, 1.0f);
+
+[Setting color category="Theme" name="Bar track"]
+vec4 S_ThemeBarTrack = vec4(1.0f, 1.0f, 1.0f, 0.12f);
+
+[Setting color category="Theme" name="Center marker"]
+vec4 S_ThemeCenterMarker = vec4(1.0f, 1.0f, 1.0f, 0.28f);
+
+[Setting color category="Theme" name="Debug text"]
+vec4 S_ThemeDebugText = vec4(0.86f, 0.88f, 0.9f, 1.0f);

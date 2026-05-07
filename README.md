@@ -20,6 +20,7 @@ It does not rewrite or inject steering input; it is an in-game visual advisor fo
 - `src/state.as`: shared runtime state and reset helpers.
 - `src/vehicle.as`: controlled vehicle lookup through `VehicleState`.
 - `src/render.as`: overlay rendering.
+- `src/theme.as`: overlay theme data and color mapping.
 - `src/math.as`: small vector/math helpers.
 - `countersteer.md`: project definition of countersteer behavior.
 

@@ -11,17 +11,15 @@ void DrawCountersteerOverlay()
         ClampSafe(screen.y * S_OverlayY - panelH * 0.5f, 12.0f, screen.y - panelH - 12.0f)
     );
 
-    vec4 accent = GetAccentColor();
-    vec4 bg = vec4(0.02f, 0.025f, 0.03f, S_Opacity);
-    vec4 border = vec4(accent.x, accent.y, accent.z, Math::Min(1.0f, S_Opacity + 0.15f));
+    OverlayTheme@ theme = GetOverlayTheme();
     float radius = 8.0f;
 
     nvg::BeginPath();
     nvg::RoundedRect(pos.x, pos.y, panelW, panelH, radius);
-    nvg::FillColor(bg);
+    nvg::FillColor(theme.Background);
     nvg::Fill();
     nvg::StrokeWidth(2.0f);
-    nvg::StrokeColor(border);
+    nvg::StrokeColor(theme.Border);
     nvg::Stroke();
 
     string label = GetInstructionLabel();
@@ -30,9 +28,9 @@ void DrawCountersteerOverlay()
 
     nvg::FontSize(titleSize);
     nvg::TextAlign(nvg::Align::Center | nvg::Align::Middle);
-    DrawTextShadow(pos.x, pos.y + panelH * 0.36f, panelW, label, accent);
+    DrawTextShadow(pos.x, pos.y + panelH * 0.36f, panelW, label, theme.Accent);
 
-    DrawStrengthBar(pos + vec2(panelW * 0.14f, panelH * 0.63f), vec2(panelW * 0.72f, Math::Max(8.0f, panelH * 0.08f)), accent);
+    DrawStrengthBar(pos + vec2(panelW * 0.14f, panelH * 0.63f), vec2(panelW * 0.72f, Math::Max(8.0f, panelH * 0.08f)), theme);
 
     if (S_ShowDebugValues) {
         string debug = "yaw " + Text::Format("%.1f deg/s", g_YawRateDeg)
@@ -44,17 +42,8 @@ void DrawCountersteerOverlay()
 
         nvg::FontSize(subSize);
         nvg::TextAlign(nvg::Align::Center | nvg::Align::Middle);
-        DrawTextShadow(pos.x, pos.y + panelH * 0.85f, panelW, debug, vec4(0.86f, 0.88f, 0.9f, S_Opacity));
+        DrawTextShadow(pos.x, pos.y + panelH * 0.85f, panelW, debug, theme.DebugText);
     }
-}
-
-vec4 GetAccentColor()
-{
-    if (!g_IsAirborne || GetTextBarDirection() == 0) {
-        return vec4(0.55f, 0.6f, 0.65f, 1.0f);
-    }
-
-    return vec4(0.25f, 0.72f, 1.0f, 1.0f);
 }
 
 string GetInstructionLabel()
@@ -85,17 +74,17 @@ int GetTextBarDirection()
     return candidate;
 }
 
-void DrawStrengthBar(const vec2 &in pos, const vec2 &in size, const vec4 &in accent)
+void DrawStrengthBar(const vec2 &in pos, const vec2 &in size, OverlayTheme@ theme)
 {
     nvg::BeginPath();
     nvg::RoundedRect(pos.x, pos.y, size.x, size.y, size.y * 0.5f);
-    nvg::FillColor(vec4(1.0f, 1.0f, 1.0f, 0.12f * S_Opacity));
+    nvg::FillColor(theme.BarTrack);
     nvg::Fill();
 
     float centerX = pos.x + size.x * 0.5f;
     nvg::BeginPath();
     nvg::Rect(centerX - 1.0f, pos.y - 3.0f, 2.0f, size.y + 6.0f);
-    nvg::FillColor(vec4(1.0f, 1.0f, 1.0f, 0.28f * S_Opacity));
+    nvg::FillColor(theme.CenterMarker);
     nvg::Fill();
 
     float denom = Math::Max(S_StrongYawDeg, S_YawThresholdDeg + 1.0f);
@@ -114,7 +103,7 @@ void DrawStrengthBar(const vec2 &in pos, const vec2 &in size, const vec4 &in acc
     if (fillW > 0.5f) {
         nvg::BeginPath();
         nvg::RoundedRect(fillX, pos.y, fillW, size.y, size.y * 0.5f);
-        nvg::FillColor(vec4(accent.x, accent.y, accent.z, 0.9f * S_Opacity));
+        nvg::FillColor(WithAlpha(theme.Accent, 0.9f * S_Opacity));
         nvg::Fill();
     }
 }
