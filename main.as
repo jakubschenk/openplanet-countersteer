@@ -1,6 +1,6 @@
-const float PI = 3.14159265359f;
-const float TAU = 6.28318530718f;
 const float RAD_TO_DEG = 57.2957795131f;
+const float MIN_RATE_DT = 0.01f;
+const float TEXT_YAW_TOLERANCE_DEG = 0.0001f;
 
 [Setting category="General" name="Enabled"]
 bool S_Enabled = true;
@@ -11,14 +11,11 @@ bool S_ShowMenuToggle = true;
 [Setting category="Detection" name="Minimum air height" min=0.0 max=5.0]
 float S_MinAirHeight = 0.03f;
 
-[Setting category="Detection" name="Yaw threshold (deg/s)" min=1.0 max=180.0]
+[Setting category="Detection" name="Yaw threshold (deg/s)" min=0.0 max=180.0]
 float S_YawThresholdDeg = 4.0f;
 
 [Setting category="Detection" name="Strong yaw (deg/s)" min=5.0 max=360.0]
 float S_StrongYawDeg = 55.0f;
-
-[Setting category="Detection" name="Duplicate sample timeout (ms)" min=20 max=250]
-uint S_DuplicateSampleTimeoutMs = 90;
 
 [Setting category="Detection" name="Smoothing" min=0.0 max=0.95]
 float S_Smoothing = 0.2f;
@@ -31,9 +28,6 @@ bool S_ShowWhenStable = true;
 
 [Setting category="Display" name="Show debug values"]
 bool S_ShowDebugValues = false;
-
-[Setting category="Display" name="Text yaw tolerance (deg/s)" min=0.0 max=5.0]
-float S_TextYawToleranceDeg = 0.05f;
 
 [Setting category="Display" name="Overlay X" min=0.0 max=1.0]
 float S_OverlayX = 0.5f;
@@ -52,9 +46,10 @@ bool g_IsPlaying = false;
 bool g_IsAirborne = false;
 bool g_VisAvailable = false;
 uint g_LastSampleTime = 0;
-uint g_LastChangedSampleTime = 0;
+uint g_LastDiscontinuityCount = 0;
 vec3 g_LastDir = vec3();
 vec3 g_LastLeft = vec3();
+vec3 g_LastUp = vec3();
 vec3 g_LastPosition = vec3();
 float g_YawRateDeg = 0.0f;
 float g_RawYawRateDeg = 0.0f;
@@ -64,8 +59,8 @@ float g_GroundDist = 0.0f;
 float g_SpeedKmh = 0.0f;
 float g_HorizontalSpeedKmh = 0.0f;
 int g_RecommendedSteer = 0;
-int g_DisplayBarDirection = 0;
-bool g_HasAirborneDirectionLock = false;
+int g_AirborneSteerDirection = 0;
+bool g_HasAirborneSteerDirection = false;
 
 void Main()
 {
@@ -92,7 +87,7 @@ void Render()
         return;
     }
 
-    if (!g_IsAirborne || (GetTextBarDirection() == 0 && !S_ShowWhenStable)) {
+    if (!g_IsAirborne || (g_RecommendedSteer == 0 && !S_ShowWhenStable)) {
         return;
     }
 
@@ -117,7 +112,7 @@ void UpdateCountersteerState()
 
     if (!IsUsableYawState(vis)) {
         ResetYawTracking();
-        ResetDisplayDirection();
+        ResetAirborneSteerDirection();
         g_IsAirborne = false;
         g_RecommendedSteer = 0;
         return;
@@ -129,11 +124,11 @@ void UpdateCountersteerState()
     g_IsAirborne = !vis.IsGroundContact && vis.GroundDist >= S_MinAirHeight;
     if (!g_IsAirborne) {
         g_RecommendedSteer = 0;
-        ResetDisplayDirection();
+        ResetAirborneSteerDirection();
         return;
     }
 
-    UpdateAirborneDirectionLock();
+    UpdateAirborneSteerDirection();
 }
 
 CSceneVehicleVisState@ GetControlledVehicleState()
@@ -170,9 +165,20 @@ void UpdateYawEstimate(CSceneVehicleVisState@ vis, uint now)
 {
     vec3 currentDir = NormalizeOrZero(vis.Dir);
     vec3 currentLeft = NormalizeOrZero(vis.Left);
+    vec3 currentUp = NormalizeOrZero(vis.Up);
+    vec3 yawAxis = NormalizeOrZero(vis.WorldCarUp);
+    if (VecLenSq(yawAxis) <= 0.000001f) {
+        yawAxis = currentUp;
+    }
 
     if (!g_HasYawSample) {
-        StoreYawSample(currentDir, currentLeft, vis.Position, now);
+        StoreYawSample(currentDir, currentLeft, currentUp, vis.Position, uint(vis.DiscontinuityCount), now);
+        ClearYawValues();
+        return;
+    }
+
+    if (uint(vis.DiscontinuityCount) != g_LastDiscontinuityCount) {
+        StoreYawSample(currentDir, currentLeft, currentUp, vis.Position, uint(vis.DiscontinuityCount), now);
         ClearYawValues();
         return;
     }
@@ -183,20 +189,13 @@ void UpdateYawEstimate(CSceneVehicleVisState@ vis, uint now)
     }
 
     if (dt > 0.25f || IsTeleportLikeMove(vis.Position)) {
-        StoreYawSample(currentDir, currentLeft, vis.Position, now);
+        StoreYawSample(currentDir, currentLeft, currentUp, vis.Position, uint(vis.DiscontinuityCount), now);
         ClearYawValues();
         return;
     }
 
-    if (!OrientationChanged(currentDir, currentLeft)) {
-        if (now - g_LastChangedSampleTime >= S_DuplicateSampleTimeoutMs) {
-            ClearYawValues();
-        }
-        return;
-    }
-
-    float yawDelta = YawDeltaFromBasis(currentDir, currentLeft);
-    float rawYawRate = yawDelta / dt * RAD_TO_DEG;
+    float yawDelta = YawDeltaFromBodyRotation(currentDir, currentLeft, currentUp, yawAxis);
+    float rawYawRate = yawDelta / Math::Max(dt, MIN_RATE_DT) * RAD_TO_DEG;
     if (S_InvertDetectedDirection) {
         rawYawRate *= -1.0f;
         yawDelta *= -1.0f;
@@ -207,77 +206,31 @@ void UpdateYawEstimate(CSceneVehicleVisState@ vis, uint now)
     g_YawRateDeg = Math::Lerp(rawYawRate, g_YawRateDeg, smoothing);
     g_LastYawDeltaDeg = yawDelta * RAD_TO_DEG;
 
-    StoreYawSample(currentDir, currentLeft, vis.Position, now);
-    g_LastChangedSampleTime = now;
+    StoreYawSample(currentDir, currentLeft, currentUp, vis.Position, uint(vis.DiscontinuityCount), now);
 }
 
-float YawDeltaFromBasis(const vec3 &in currentDir, const vec3 &in currentLeft)
+float YawDeltaFromBodyRotation(const vec3 &in currentDir, const vec3 &in currentLeft, const vec3 &in currentUp, const vec3 &in yawAxis)
 {
-    vec3 worldUp = WorldUp();
-    float weightedDelta = 0.0f;
-    float weightSum = 0.0f;
-
-    float dirWeight = YawProjectionWeight(g_LastDir, currentDir, worldUp);
-    if (dirWeight > 0.0f) {
-        weightedDelta += ProjectedYawDelta(g_LastDir, currentDir, worldUp) * dirWeight;
-        weightSum += dirWeight;
-    }
-
-    float leftWeight = YawProjectionWeight(g_LastLeft, currentLeft, worldUp);
-    if (leftWeight > 0.0f) {
-        weightedDelta += ProjectedYawDelta(g_LastLeft, currentLeft, worldUp) * leftWeight;
-        weightSum += leftWeight;
-    }
-
-    if (weightSum <= 0.000001f) {
+    if (VecLenSq(yawAxis) <= 0.000001f) {
         return 0.0f;
     }
 
-    return NormalizeAngle(weightedDelta / weightSum);
-}
-
-float YawProjectionWeight(const vec3 &in fromVec, const vec3 &in toVec, const vec3 &in axis)
-{
-    vec3 fromProjected = ProjectOntoPlane(fromVec, axis);
-    vec3 toProjected = ProjectOntoPlane(toVec, axis);
-    float fromLenSq = VecLenSq(fromProjected);
-    float toLenSq = VecLenSq(toProjected);
-    if (fromLenSq <= 0.000001f || toLenSq <= 0.000001f) {
-        return 0.0f;
-    }
-
-    return Math::Sqrt(Math::Min(fromLenSq, toLenSq));
-}
-
-float ProjectedYawDelta(const vec3 &in fromVec, const vec3 &in toVec, const vec3 &in axis)
-{
-    return SignedAngleFromProjected(ProjectOntoPlane(fromVec, axis), ProjectOntoPlane(toVec, axis), axis);
-}
-
-float SignedAngleFromProjected(const vec3 &in fromProjected, const vec3 &in toProjected, const vec3 &in axis)
-{
-    vec3 fromNorm = NormalizeOrZero(fromProjected);
-    vec3 toNorm = NormalizeOrZero(toProjected);
-    float sinAngle = Math::Dot(axis, Math::Cross(fromNorm, toNorm));
-    float cosAngle = Math::Clamp(Math::Dot(fromNorm, toNorm), -1.0f, 1.0f);
-    return Math::Atan2(sinAngle, cosAngle);
+    vec3 angularDelta =
+        (Math::Cross(g_LastDir, currentDir)
+        + Math::Cross(g_LastLeft, currentLeft)
+        + Math::Cross(g_LastUp, currentUp)) * 0.5f;
+    return Math::Dot(angularDelta, yawAxis);
 }
 
 bool IsUsableYawState(CSceneVehicleVisState@ vis)
 {
-    if (VecLenSq(vis.Dir) <= 0.000001f || VecLenSq(vis.Left) <= 0.000001f) {
+    if (VecLenSq(vis.Dir) <= 0.000001f
+        || VecLenSq(vis.Left) <= 0.000001f
+        || VecLenSq(vis.Up) <= 0.000001f) {
         return false;
     }
 
-    vec3 worldUp = WorldUp();
-    return VecLenSq(ProjectOntoPlane(vis.Dir, worldUp)) > 0.000001f
-        || VecLenSq(ProjectOntoPlane(vis.Left, worldUp)) > 0.000001f;
-}
-
-bool OrientationChanged(const vec3 &in currentDir, const vec3 &in currentLeft)
-{
-    float basisDelta = VecLenSq(currentDir - g_LastDir) + VecLenSq(currentLeft - g_LastLeft);
-    return basisDelta > 0.0000000001f;
+    return VecLenSq(vis.WorldCarUp) > 0.000001f || VecLenSq(vis.Up) > 0.000001f;
 }
 
 bool IsTeleportLikeMove(const vec3 &in currentPosition)
@@ -285,16 +238,15 @@ bool IsTeleportLikeMove(const vec3 &in currentPosition)
     return VecLenSq(currentPosition - g_LastPosition) > 2500.0f;
 }
 
-void StoreYawSample(const vec3 &in currentDir, const vec3 &in currentLeft, const vec3 &in currentPosition, uint now)
+void StoreYawSample(const vec3 &in currentDir, const vec3 &in currentLeft, const vec3 &in currentUp, const vec3 &in currentPosition, uint discontinuityCount, uint now)
 {
     g_HasYawSample = true;
+    g_LastDiscontinuityCount = discontinuityCount;
     g_LastDir = currentDir;
     g_LastLeft = currentLeft;
+    g_LastUp = currentUp;
     g_LastPosition = currentPosition;
     g_LastSampleTime = now;
-    if (g_LastChangedSampleTime == 0) {
-        g_LastChangedSampleTime = now;
-    }
 }
 
 void ResetTracking()
@@ -307,7 +259,7 @@ void ResetTracking()
     g_GroundDist = 0.0f;
     g_SpeedKmh = 0.0f;
     g_HorizontalSpeedKmh = 0.0f;
-    ResetDisplayDirection();
+    ResetAirborneSteerDirection();
     ResetYawTracking();
 }
 
@@ -315,11 +267,13 @@ void ResetYawTracking()
 {
     g_HasYawSample = false;
     g_LastSampleTime = 0;
-    g_LastChangedSampleTime = 0;
+    g_LastDiscontinuityCount = 0;
     g_LastDir = vec3();
     g_LastLeft = vec3();
+    g_LastUp = vec3();
     g_LastPosition = vec3();
     ClearYawValues();
+    g_RecommendedSteer = 0;
 }
 
 void ClearYawValues()
@@ -329,26 +283,29 @@ void ClearYawValues()
     g_LastYawDeltaDeg = 0.0f;
 }
 
-void ResetDisplayDirection()
+void ResetAirborneSteerDirection()
 {
-    g_DisplayBarDirection = 0;
-    g_HasAirborneDirectionLock = false;
-    g_RecommendedSteer = 0;
+    g_AirborneSteerDirection = 0;
+    g_HasAirborneSteerDirection = false;
 }
 
-void UpdateAirborneDirectionLock()
+void UpdateAirborneSteerDirection()
 {
-    if (!g_HasAirborneDirectionLock) {
-        int candidate = CandidateTextBarDirection();
+    if (!g_HasAirborneSteerDirection) {
+        int candidate = BarDirectionFromYawSignal(g_RawYawRateDeg);
+        if (candidate == 0) {
+            candidate = BarDirectionFromYawSignal(g_YawRateDeg);
+        }
         if (candidate == 0) {
             g_RecommendedSteer = 0;
             return;
         }
-        g_DisplayBarDirection = candidate;
-        g_HasAirborneDirectionLock = true;
+
+        g_AirborneSteerDirection = candidate;
+        g_HasAirborneSteerDirection = true;
     }
 
-    g_RecommendedSteer = g_DisplayBarDirection;
+    g_RecommendedSteer = g_AirborneSteerDirection;
 }
 
 vec3 WorldUp()
@@ -359,17 +316,6 @@ vec3 WorldUp()
 vec3 ProjectOntoPlane(const vec3 &in v, const vec3 &in normal)
 {
     return v - normal * Math::Dot(v, normal);
-}
-
-float NormalizeAngle(float angle)
-{
-    while (angle > PI) {
-        angle -= TAU;
-    }
-    while (angle < -PI) {
-        angle += TAU;
-    }
-    return angle;
 }
 
 vec3 NormalizeOrZero(const vec3 &in v)
@@ -449,12 +395,12 @@ vec4 GetAccentColor()
 string GetInstructionLabel()
 {
     if (!g_IsAirborne) {
-        return "CENTER";
+        return "";
     }
 
     int barDirection = GetTextBarDirection();
     if (barDirection == 0) {
-        return "CENTER";
+        return "";
     }
 
     int steerDirection = -barDirection;
@@ -463,21 +409,29 @@ string GetInstructionLabel()
 
 int GetTextBarDirection()
 {
-    return g_DisplayBarDirection;
+    if (g_RecommendedSteer != 0) {
+        return g_RecommendedSteer;
+    }
+
+    int candidate = DirectionFromYawSignal(g_RawYawRateDeg, TEXT_YAW_TOLERANCE_DEG);
+    if (candidate == 0) {
+        candidate = DirectionFromYawSignal(g_YawRateDeg, TEXT_YAW_TOLERANCE_DEG);
+    }
+    return candidate;
 }
 
-int CandidateTextBarDirection()
+int BarDirectionFromYawSignal(float yawSignal)
 {
-    float tolerance = Math::Max(S_TextYawToleranceDeg, 0.0f);
-    if (Math::Abs(g_YawRateDeg) > tolerance) {
-        return g_YawRateDeg > 0.0f ? -1 : 1;
+    return DirectionFromYawSignal(yawSignal, Math::Max(S_YawThresholdDeg, 0.0f));
+}
+
+int DirectionFromYawSignal(float yawSignal, float tolerance)
+{
+    if (yawSignal == 0.0f || Math::Abs(yawSignal) < tolerance) {
+        return 0;
     }
 
-    if (Math::Abs(g_RawYawRateDeg) > tolerance) {
-        return g_RawYawRateDeg > 0.0f ? -1 : 1;
-    }
-
-    return 0;
+    return yawSignal > 0.0f ? -1 : 1;
 }
 
 void DrawStrengthBar(const vec2 &in pos, const vec2 &in size, const vec4 &in accent)
