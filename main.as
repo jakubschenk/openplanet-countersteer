@@ -35,12 +35,6 @@ bool S_ShowDebugValues = false;
 [Setting category="Display" name="Text yaw tolerance (deg/s)" min=0.0 max=5.0]
 float S_TextYawToleranceDeg = 0.05f;
 
-[Setting category="Display" name="Text switch tolerance (deg/s)" min=0.0 max=20.0]
-float S_TextSwitchToleranceDeg = 1.0f;
-
-[Setting category="Display" name="Text switch hold (ms)" min=0 max=300]
-uint S_TextSwitchHoldMs = 80;
-
 [Setting category="Display" name="Overlay X" min=0.0 max=1.0]
 float S_OverlayX = 0.5f;
 
@@ -71,7 +65,7 @@ float g_SpeedKmh = 0.0f;
 float g_HorizontalSpeedKmh = 0.0f;
 int g_RecommendedSteer = 0;
 int g_DisplayBarDirection = 0;
-uint g_DisplayDirectionChangedTime = 0;
+bool g_HasAirborneDirectionLock = false;
 
 void Main()
 {
@@ -139,8 +133,7 @@ void UpdateCountersteerState()
         return;
     }
 
-    g_RecommendedSteer = RecommendedCountersteer(g_YawRateDeg);
-    UpdateDisplayDirection(now);
+    UpdateAirborneDirectionLock();
 }
 
 CSceneVehicleVisState@ GetControlledVehicleState()
@@ -270,15 +263,6 @@ float SignedAngleFromProjected(const vec3 &in fromProjected, const vec3 &in toPr
     return Math::Atan2(sinAngle, cosAngle);
 }
 
-int RecommendedCountersteer(float yawRateDeg)
-{
-    if (Math::Abs(yawRateDeg) < S_YawThresholdDeg) {
-        return 0;
-    }
-
-    return yawRateDeg > 0.0f ? -1 : 1;
-}
-
 bool IsUsableYawState(CSceneVehicleVisState@ vis)
 {
     if (VecLenSq(vis.Dir) <= 0.000001f || VecLenSq(vis.Left) <= 0.000001f) {
@@ -348,33 +332,23 @@ void ClearYawValues()
 void ResetDisplayDirection()
 {
     g_DisplayBarDirection = 0;
-    g_DisplayDirectionChangedTime = 0;
+    g_HasAirborneDirectionLock = false;
+    g_RecommendedSteer = 0;
 }
 
-void UpdateDisplayDirection(uint now)
+void UpdateAirborneDirectionLock()
 {
-    int candidate = CandidateTextBarDirection();
-    if (candidate == g_DisplayBarDirection) {
-        return;
-    }
-
-    if (g_DisplayBarDirection == 0 || candidate == 0) {
+    if (!g_HasAirborneDirectionLock) {
+        int candidate = CandidateTextBarDirection();
+        if (candidate == 0) {
+            g_RecommendedSteer = 0;
+            return;
+        }
         g_DisplayBarDirection = candidate;
-        g_DisplayDirectionChangedTime = now;
-        return;
+        g_HasAirborneDirectionLock = true;
     }
 
-    if (now - g_DisplayDirectionChangedTime < S_TextSwitchHoldMs) {
-        return;
-    }
-
-    float switchThreshold = Math::Max(S_TextYawToleranceDeg + S_TextSwitchToleranceDeg, S_TextYawToleranceDeg);
-    if (Math::Max(Math::Abs(g_YawRateDeg), Math::Abs(g_RawYawRateDeg)) < switchThreshold) {
-        return;
-    }
-
-    g_DisplayBarDirection = candidate;
-    g_DisplayDirectionChangedTime = now;
+    g_RecommendedSteer = g_DisplayBarDirection;
 }
 
 vec3 WorldUp()
@@ -494,10 +468,6 @@ int GetTextBarDirection()
 
 int CandidateTextBarDirection()
 {
-    if (g_RecommendedSteer != 0) {
-        return g_RecommendedSteer;
-    }
-
     float tolerance = Math::Max(S_TextYawToleranceDeg, 0.0f);
     if (Math::Abs(g_YawRateDeg) > tolerance) {
         return g_YawRateDeg > 0.0f ? -1 : 1;
