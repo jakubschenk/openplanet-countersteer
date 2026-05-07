@@ -26,4 +26,4 @@ It does not rewrite or inject steering input; it is an in-game visual advisor fo
 
 ## Releases
 
-Generated `.op` archives are not tracked in the repository. Push a `v*` tag, for example `v0.3.0`, to run the GitHub Actions workflow and publish `CountersteerAdvisor.op` as a release asset.
+Generated `.op` archives are not tracked in the repository. Push a `v*` tag, for example `v0.4.0`, to run the GitHub Actions workflow and publish `CountersteerAdvisor.op` as a release asset.
